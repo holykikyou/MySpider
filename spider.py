@@ -1,3 +1,6 @@
+"""
+直接运行，方便快捷，输入百科URL，即可按词条关联深度或词条数量获取领域相关百科数据，代码可以根据个人情况进行修改
+"""
 import collections
 class UrlManager(object):
 
@@ -39,14 +42,14 @@ import re
 
 
 
-class HtmlParser(object):
+class HtmlParser(object):    #页面解析器，可继续优化逻辑
 
     def _get_new_urls(self, page_url, soup):
         new_urls = set()
         # /view/123.html
         # /item/Python/407313
         # links = soup.find_all('a', href=re.compile(r"/view/\d+\.htm"))
-        links = soup.find_all('a', href=re.compile(r"/item/*"))   #界面解析
+        links = soup.find_all('a', href=re.compile(r"/item/*"))      #界面解析
 
         for link in links:
             new_url = link['href']
@@ -85,7 +88,7 @@ class HtmlParser(object):
             return
 
         soup = BeautifulSoup(html_cont, 'html.parser', from_encoding='utf-8')
-        new_urls = self._get_new_urls(page_url, soup)
+        new_urls = self._get_new_urls(page_url, soup)         #获取新url
         new_data = self._get_new_data(page_url, soup)
         return new_urls, new_data
 
@@ -95,9 +98,9 @@ from urllib import error
 import ssl
 
 
-ssl._create_default_https_context = ssl._create_unverified_context
+#ssl._create_default_https_context = ssl._create_unverified_context
 
-class HtmlDownloader(object):
+class HtmlDownloader(object):      #根据url下载网页内容
 
     def download(self, url):
         if url is None:
@@ -115,7 +118,7 @@ class HtmlDownloader(object):
         # print response.read()
         return response.read()
 
-class HtmlOutputer(object):
+class HtmlOutputer(object):      #百科数据输出
 
     def __init__(self):
         self.datas = []
@@ -142,8 +145,10 @@ class HtmlOutputer(object):
         fout.write("</table>")
         fout.write("</body>")
         fout.write("</html>")
+    def output_text(self):  #输出网页文本
+        pass
 
-class SpiderMain(object):
+class SpiderMain(object):              #主调度器
     def __init__(self):
         self.urls = UrlManager()
         self.downloader = HtmlDownloader()
@@ -173,10 +178,10 @@ class SpiderMain(object):
         self.outputer.output_html()
 
 if __name__=="__main__":
-    # root_url = "https://baike.baidu.com/view/10812319.htm"
-    root_url = "https://baike.baidu.com/item/%E9%9B%86%E6%88%90%E7%94%B5%E8%B7%AF"
-    #root_url = "https://baike.baidu.com/item/python/407313"
-    #root_url='https://baike.baidu.com/item/%E9%87%91%E8%9E%8D/860'
+    # root_url = "https://baike.baidu.com/view/10812319.htm"   
+    root_url = "https://baike.baidu.com/item/%E9%9B%86%E6%88%90%E7%94%B5%E8%B7%AF"  #集成电路
+    #root_url = "https://baike.baidu.com/item/python/407313"  #python 百科
+    #root_url='https://baike.baidu.com/item/%E9%87%91%E8%9E%8D/860'  #金融
 
     obj_spider = SpiderMain()
     obj_spider.craw(root_url)
