@@ -178,29 +178,35 @@ class SpiderMain(object):
 
 
 
-    def craw(self, root_url):
-        count = 1
+        def craw(self, root_url):
+
         self.urls.add_new_url(root_url)
-        while self.urls.has_new_url():         #深度优先遍历可能会引入无关的内容
-            try:
-                # new_url = self.urls.get_new_url()
-
-
-                nums_of_urls=len(self.urls.new_urls)  #这一轮的遍历数量
-                for i in range(nums_of_urls):
-
-                    new_url = self.urls.get_new_url()       #广度优先遍历
+        while self.urls.has_new_url():
+            count=0#深度优先遍历可能会引入无关的内容
+            nums_of_urls = len(self.urls.new_urls)  # 这一轮的遍历数量
+            for i in range(nums_of_urls):
+                try:
+                    new_url = self.urls.get_new_url()  # 广度优先遍历
                     count = count + 1
-                    print('craw %d : %s' % (count, new_url))
+                    print('craw %d/%d : %s' % (count, nums_of_urls, new_url))
                     html_cont = self.downloader.download(new_url)
                     """
                     在下面或许可以增加实体分类的逻辑
                     """
+
                     new_urls, new_data = self.parser.parse(new_url, html_cont)
-                    self.urls.title.append(new_data['title'])  #加入title
-                    self.urls.add_new_urls(new_urls)    #
-                    print("depth:",self.urls.depth)
+                    self.urls.title.append(new_data['title'])  # 加入title
+                    self.urls.add_new_urls(new_urls)  #
+                    print("depth:", self.urls.depth)
                     self.outputer.collect_data(new_data)
+                except:
+                    print('craw failed')
+
+                # new_url = self.urls.get_new_url()
+
+
+
+
                 # new_url = self.urls.get_new_url()
                 # count = count + 1
                 # print('craw %d : %s' % (count, new_url))
@@ -208,13 +214,12 @@ class SpiderMain(object):
                 # new_urls, new_data = self.parser.parse(new_url, html_cont)   #这是一般的无规则遍历
                 # self.urls.add_new_urls(new_urls)
                 # self.outputer.collect_data(new_data)
-                self.urls.depth += 1
+            self.urls.depth += 1
 
                 # if count == 10:
                 #     print ('done')
                 #     break
-            except:
-                print ('craw failed')
+
 
 
         self.outputer.output_html()
