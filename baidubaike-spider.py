@@ -178,7 +178,7 @@ class SpiderMain(object):
 
 
 
-        def craw(self, root_url):
+    def craw(self, root_url):
 
         self.urls.add_new_url(root_url)
         while self.urls.has_new_url():
