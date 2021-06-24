@@ -1,4 +1,9 @@
-"""应该是我写的最难维护的爬虫代码"""
+"""
+author:holykikyou
+data:0624
+
+应该是不可维护的多线程爬虫代码
+"""
 
 
 class mySpider:
