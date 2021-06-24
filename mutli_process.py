@@ -5,6 +5,13 @@ data:0624
 应该是不可维护的多线程爬虫代码
 """
 
+def simple_mutilthread(detail_url_list):
+    """调包，优雅解决问题之道"""
+    from multiprocessing.dummy import Pool
+    pool=Pool()
+    pool.map(myextractorfunction,detail_url_list)
+    
+
 
 class mySpider:
 
