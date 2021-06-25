@@ -1,0 +1,303 @@
+
+
+"""
+抓取新闻文本
+"""
+
+
+from tqdm import tqdm
+import json
+import re
+import codecs
+from urllib.parse import  urljoin
+import requests
+from utils_body_html.mysql_control import Py2MySQLRss
+from requests import exceptions
+from gne import GeneralNewsExtractor
+from boltons.setutils import IndexedSet
+from pybloom_live import BloomFilter
+
+from config import Config
+import random
+
+from utils_body_html.just_save_p_img import strip_html, just_save_p_img
+from utils_body_html.html_utils import url_join,remove_tag
+
+from pybloom_live import BloomFilter
+
+from lxml import  etree
+import time
+
+import pickle
+import datetime
+"""三个时间处理函数"""
+def get_right_time(timestr):
+    """
+    去掉时间字符串中的中文部分
+    2021年06月15日 09:10
+    2021-06-15
+    """
+
+    try:
+        hour_min=timestr.split(' ')[1]
+        if len(hour_min)==5:
+            hour_min+=':00'
+        else:
+            hour_min='08:00:00'  #假设是早上八点的新闻
+        time_num = re.findall(pattern='[0-9]+', string=timestr)
+        right_time = '-'.join(time_num[:3]) + ' ' + hour_min
+    except:
+        time_num = re.findall(pattern='[0-9]+', string=timestr)
+        right_time = '-'.join(time_num[:3]) + ' '+'00:00:00'
+
+    #right_time=time.strptime(right_time, '%Y-%m-%d %H:%M:%S')  #返回数据结构
+    return right_time
+
+# print(get_right_time('9999-0-0  09:10'))
+test_time='9999-0-0  14:00:21'
+def get_timestamp(right_time):
+    """获取时间戳"""
+    import time
+
+    stamp = time.mktime(time.strptime(right_time, '%Y-%m-%d %H:%M:%S'))
+    return int(stamp)
+
+# print(get_timestamp(test_time,))
+
+def check_daydiff(time1,time2,max_diff=3):
+    """检测两个时间字符串是否相隔三天以内
+    两个步骤：
+    获取正确时间
+    比较时间戳
+    """
+    def get_timestamp(right_time):
+        """获取时间戳"""
+        import time
+        right_time=time.strptime(right_time, '%Y-%m-%d %H:%M:%S')
+        stamp = time.mktime(right_time)  #返回从初始时刻开始到现在的秒数
+        return int(stamp)
+
+
+    timestamp1=get_right_time(time1)
+    timestamp2=get_right_time(time2)  #获取正确时间格式
+    try:
+        real_diff=abs(get_timestamp(timestamp1)-get_timestamp(timestamp2))/86400
+        print(f'{time1}和{time2}相差{real_diff}天')
+        return real_diff<max_diff
+    except:
+        print(f"{time1}格式错误,无法获取对应时间戳")
+
+class Spider():
+    """不聋过滤器在单个类完全是不必要的，
+    和原生set耗时比较耗时
+    不再直接使用url_list进行初始化
+    """
+    def __init__(self):
+        self.config = Config()
+
+
+        self.extractor = GeneralNewsExtractor()
+        self.used_url=set()
+        self.bloom_filter = BloomFilter(capacity=1000, error_rate=0.001)  # 初始化布隆过滤器
+        self.results = {}
+        self.status = {}
+        #self.encode = chardet.detect(urllib.request.urlopen(url=url_list[0]).read())['encoding']
+    def get_text(self,url):
+
+
+        """使用response.apparent_encoding 获取网站编码
+        网站有时不太稳定所以
+        尝试打开三次"""
+
+        n = 2
+        try:
+
+
+            while (n>=0):
+                try:
+                    n = n - 1
+                    response = requests.get(url=url, headers=self.config.user_agent, timeout=5)
+                    self.encode = response.apparent_encoding
+
+                    response.encoding = self.encode
+
+                    html = response.text
+                    time.sleep(random.randint(2, 4))
+                    return html
+
+                except:
+                    continue
+            response = requests.get(url=url, headers=self.config.user_agent, timeout=5)
+            self.encode = response.apparent_encoding
+
+            response.encoding = self.encode
+            html = response.text
+            return html   #如果第三次都没有返回值则报错
+        except (
+        exceptions.ConnectionError, exceptions.Timeout, exceptions.MissingSchema, exceptions.ChunkedEncodingError):
+            self.status[url] = 'Connection Error'
+        except exceptions.HTTPError:
+            self.status[url] = 'Http Error'
+        except exceptions.TooManyRedirects:
+            self.status[url] = 'Redirects'
+        except exceptions.RequestException as err:
+            self.status[url] = 'Fatal Error' + str(err) + url
+
+        if self.status:  # 错误日志存储
+            status_json = json.dumps(self.status, indent=4, ensure_ascii=False)
+            with codecs.open(filename=self.config.log_path, mode='a', encoding='utf-8') as fs:
+                fs.write(status_json + '\n')
+
+    def extract(self,detail_url_list):
+        data_all = []
+        # 获取所有详情页的url
+        for idx, detail_url in enumerate(tqdm(detail_url_list)):
+
+            if self.get_text(url=detail_url):
+                detail_html = self.get_text(url=detail_url)  # 获取详情页url的html
+                try:
+                    result = self.extractor.extract(html=detail_html, with_body_html=True)  # 抽取出主要内容
+                except:
+                    continue  #无返回则直接下个url
+                content = strip_html(content=result['content'])
+
+                """清理标签和无用图片url"""
+                body_html = just_save_p_img(html=result['body_html'])
+
+                # body_html = remove_tag(body_html, tag='strong')
+                body_html = remove_tag(body_html, tag='img', remove_content=True)
+                body_html = remove_tag(body_html, tag='img', remove_content=True) #手动保留imageurl
+                """清理敏感侵权内容"""
+                body_html = self.remove_source(body_html)  # 清理正文
+                # content=self.remove_source(content)
+
+                result['content'] = content
+                result['body_html'] = body_html
+                result['url'] = detail_url  # 添加url字段用于数据库去重
+                result['source'] = '新浪财经'
+                """处理图片url"""
+                try:
+                    imageurl_list = self.get_imageurl(body_html)  # 获取图片url
+                except:
+                    imageurl_list=[]
+
+                result['images'] = imageurl_list
+
+                print('image:', imageurl_list)
+
+                """处理带有中文的时间字符串并检查时间"""
+                pub_data = result['publish_time']
+
+                pub_data = get_right_time(pub_data)
+                print(f"第{idx}篇新闻链接{detail_url}\n第{idx}篇新闻发布时间{pub_data}",pub_data)
+                result['publish_time'] = pub_data
+                now = str(datetime.datetime.now())
+                try:
+                    if result['publish_time']is  None or not check_daydiff(result['publish_time'],now,3):
+                        continue
+                except:
+                    continue
+
+
+                """打印必要信息"""
+
+                if len(result['body_html'])>270 :  # 入库条件，爬取到1000字以上且三天内的新闻
+                    print(f"第{idx}篇新闻链接{detail_url}\n body:", result['body_html'])
+                    data_all.append(result)
+            else:
+                continue
+        return data_all
+
+    def get_url(self):
+        pass
+
+    def get_imageurl(self, html):
+        """有图的话手动获取"""
+
+        e=etree.HTML(html)
+        image_url_list=e.xpath('//div//img/@src')
+        """确认URL完整"""
+        return [url_join('http://',url) for url in image_url_list if not url.startswith('http')]
+
+    @staticmethod
+    def remove_source(html):
+        """去除广告部分"""
+
+        return html
+
+
+
+from multiprocessing.dummy import Pool#多线程
+def get_detail_url(url):
+    """多线程爬取多个界面的详情页的单位函数"""
+    s=Spider()
+    try:
+        html1 = s.get_text(url)
+
+        e = etree.HTML(html1)
+        detail_url_list1 = e.xpath('//div[@class="thetitle"]//a/@href')
+        print('某批次详情页', detail_url_list1, '\n')
+    except:
+        detail_url_list1=[]
+    """16:123秒  40："""
+    return detail_url_list1
+
+def get_article(detail_url):
+    """"""
+    s=Spider()
+    data=s.extract(detail_url)
+    return  data
+
+
+def process():
+    # s=Spider()
+    # root_url='https://www.esmchina.com/'
+    # all_detail_url_list=[]
+    # """国际电子资讯"""
+    # start=time.time()
+    # #https://www.esmchina.com/news/index_1.html 无效
+    # url_list=['https://www.esmchina.com/news/index_%d.html'%(i) for i in range(2,476)]
+    # pool=Pool(16)
+    #
+    #
+    # all_detail_url_list=pool.map(get_detail_url,url_list)
+    # with open('tempdata.pkl',mode='wb')as f:
+    #      pickle.dump(all_detail_url_list,f)
+    #      print("save successfully")
+    with open('tempdata.pkl', mode='rb') as f:
+         all_detail_url_list= pickle.load(f)
+         print("load successfully")
+    all_detail_url_list=[_ for l in all_detail_url_list for _ in l] #铺开列表
+    # print(all_detail_url_list)
+    all_detail_url_list=[urljoin(  'https://www.esmchina.com/news/',url) for url in all_detail_url_list if not url.startswith('http')]
+    # print(len(all_detail_url_list))
+    # print(type(all_detail_url_list))
+
+    end=time.time()
+    # print(f'耗时{end-start}秒')
+    try:
+        with open('escmchina_detail_url.txt', mode='w+', encoding='utf-8') as f:
+            for i in all_detail_url_list:
+                f.write(i + '\n')
+            print("写入完成")
+    except:
+        print('写入失败')
+
+    """抽取文章"""
+    start=time.time()
+    article_pool=Pool(20)
+    all_data=article_pool.map(get_article,all_detail_url_list)
+    with open('esc_articledata.pkl',mode='wb')as f:
+         pickle.dump(all_data,f)
+         print("save successfully")
+
+    print(f'耗时{time.time()-start}秒')
+
+
+
+
+
+
+
+
+process()
